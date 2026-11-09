@@ -3,7 +3,7 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <atomic>
 
-// NARMIA.AI Bassend: sidechain ducker de propósito general.
+// NARMIA.AI Bassend v2: sidechain ducker de un solo knob.
 // Entrada principal = bajo/pads. Sidechain = kick.
 class BassendProcessor : public juce::AudioProcessor
 {
@@ -34,17 +34,14 @@ public:
     void getStateInformation (juce::MemoryBlock& destData) override;
     void setStateInformation (const void* data, int sizeInBytes) override;
 
-    // Público para que el editor pueda conectar los controles y leer el medidor.
+    // Público para que el editor conecte el knob y lea el medidor.
     juce::AudioProcessorValueTreeState apvts;
     std::atomic<float> reductionMeter { 0.0f };
 
 private:
     static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
 
-    std::atomic<float>* depthParam   = nullptr;
-    std::atomic<float>* attackParam  = nullptr;
-    std::atomic<float>* holdParam    = nullptr;
-    std::atomic<float>* releaseParam = nullptr;
+    std::atomic<float>* intensityParam = nullptr;
 
     double sampleRate = 44100.0;
     float detectorEnv = 0.0f;

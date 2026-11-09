@@ -20,10 +20,7 @@ BassendProcessor::BassendProcessor()
                           .withOutput ("Output",    juce::AudioChannelSet::stereo(), true)),
       apvts (*this, nullptr, "PARAMETERS", createParameterLayout())
 {
-    depthParam   = apvts.getRawParameterValue ("depth");
-    attackParam  = apvts.getRawParameterValue ("attack");
-    holdParam    = apvts.getRawParameterValue ("hold");
-    releaseParam = apvts.getRawParameterValue ("release");
+    intensityParam = apvts.getRawParameterValue ("intensity");
 }
 
 juce::AudioProcessorValueTreeState::ParameterLayout BassendProcessor::createParameterLayout()
@@ -31,24 +28,9 @@ juce::AudioProcessorValueTreeState::ParameterLayout BassendProcessor::createPara
     juce::AudioProcessorValueTreeState::ParameterLayout layout;
 
     layout.add (std::make_unique<juce::AudioParameterFloat> (
-        juce::ParameterID { "depth", 1 }, "Depth",
-        juce::NormalisableRange<float> (0.0f, 100.0f, 0.1f), 80.0f,
+        juce::ParameterID { "intensity", 1 }, "Intensity",
+        juce::NormalisableRange<float> (0.0f, 100.0f, 0.1f), 60.0f,
         juce::AudioParameterFloatAttributes().withLabel ("%")));
-
-    layout.add (std::make_unique<juce::AudioParameterFloat> (
-        juce::ParameterID { "attack", 1 }, "Attack",
-        juce::NormalisableRange<float> (0.1f, 50.0f, 0.01f, 0.5f), 5.0f,
-        juce::AudioParameterFloatAttributes().withLabel ("ms")));
-
-    layout.add (std::make_unique<juce::AudioParameterFloat> (
-        juce::ParameterID { "hold", 1 }, "Hold",
-        juce::NormalisableRange<float> (0.0f, 500.0f, 0.1f), 80.0f,
-        juce::AudioParameterFloatAttributes().withLabel ("ms")));
-
-    layout.add (std::make_unique<juce::AudioParameterFloat> (
-        juce::ParameterID { "release", 1 }, "Release",
-        juce::NormalisableRange<float> (5.0f, 1000.0f, 0.1f, 0.5f), 150.0f,
-        juce::AudioParameterFloatAttributes().withLabel ("ms")));
 
     return layout;
 }
@@ -71,7 +53,7 @@ bool BassendProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
 
 void BassendProcessor::prepareToPlay (double newSampleRate, int)
 {
-    sampleRate = newSampleRate;
+    sampleRate  = newSampleRate;
     detectorEnv = 0.0f;
     currentDuck = 0.0f;
     holdCounter = 0;
@@ -88,10 +70,21 @@ void BassendProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mid
     const int mainChannels = mainBus.getNumChannels();
     const int scChannels   = scBus.getNumChannels();
 
-    const float depth       = depthParam->load() * 0.01f;
-    const float attackCoef  = coefFromMs (attackParam->load(), sampleRate);
-    const float releaseCoef = coefFromMs (releaseParam->load(), sampleRate);
-    const int   holdSamples = (int) (holdParam->load() * 0.001 * sampleRate);
+    // Un solo knob (0..1). Cuanto más alto, más profundo, rápido y exagerado el ducking.
+    const float n = juce::jlimit (0.0f, 1.0f, intensityParam->load() * 0.01f);
+
+    // Profundidad: crece de forma no lineal para que el tramo alto se note más.
+    // Tope en 97 % para no llegar a silencio total.
+    const float maxDepth = 0.97f * std::pow (n, 1.2f);
+
+    // Ataque: más rápido al subir la intensidad.
+    const float attackCoef = coefFromMs (8.0f - 6.0f * n, sampleRate);
+
+    // Liberación: más corta al subir la intensidad, para un efecto de bombeo más marcado.
+    const float releaseCoef = coefFromMs (juce::jmax (60.0f, 260.0f - 200.0f * n), sampleRate);
+
+    // Retención: 20 ms a 300 ms según la intensidad.
+    const int holdSamples = (int) ((20.0f + 280.0f * n) * 0.001 * sampleRate);
 
     // Detector fijo: ataque muy rápido para captar el transitorio del kick.
     const float detAttackCoef  = coefFromMs (1.0f, sampleRate);
@@ -101,16 +94,14 @@ void BassendProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mid
 
     for (int i = 0; i < numSamples; ++i)
     {
-        // Nivel del sidechain (máximo de canales).
         float sc = 0.0f;
         for (int ch = 0; ch < scChannels; ++ch)
             sc = std::max (sc, std::abs (scBus.getSample (ch, i)));
 
         detectorEnv += (sc - detectorEnv) * (sc > detectorEnv ? detAttackCoef : detReleaseCoef);
 
-        const float target = depth * juce::jlimit (0.0f, 1.0f, detectorEnv);
+        const float target = maxDepth * juce::jlimit (0.0f, 1.0f, detectorEnv);
 
-        // Ataque hacia la reducción, retención y luego liberación.
         if (target > currentDuck)
         {
             currentDuck += (target - currentDuck) * attackCoef;
